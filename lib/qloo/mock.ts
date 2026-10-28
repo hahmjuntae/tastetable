@@ -1,7 +1,7 @@
 import { BY_ID, CATALOG, CATEGORY_TAGS, DIM_TAGS, type Category, type Dim, type MockEntity } from "./fixtures.ts";
 import type { QlooEntity, QlooParams, QlooTagInsight } from "./types.ts";
 
-// 문서에 나온 요청 파라미터와 응답 틀을 흉내 내는 결정적 목 서버
+// 실제 API 응답 틀(2026-10-29 확인)을 흉내 내는 결정적 목 서버, 테스트 전용
 
 type MockResponse = { status: number; body: unknown };
 
@@ -71,7 +71,7 @@ function toQlooEntity(e: MockEntity, extra: Partial<QlooEntity> = {}): QlooEntit
 
 function search(params: QlooParams): MockResponse {
   const q = norm(String(params.query ?? ""));
-  if (!q) return { status: 400, body: { error: "query is required" } };
+  if (!q) return { status: 400, body: { errors: [{ message: "query is required" }] } };
   const types = list(params.types);
   const take = Number(params.take ?? 10);
   const scored = CATALOG.filter((e) => !types.length || types.includes(e.subtype))
@@ -83,8 +83,8 @@ function search(params: QlooParams): MockResponse {
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || b.e.popularity - a.e.popularity)
     .slice(0, take);
-  if (!scored.length) return { status: 404, body: { error: "No results" } };
-  return { status: 200, body: { success: true, duration: 0.01, results: scored.map((x) => toQlooEntity(x.e)) } };
+  // 실제 /search 는 subtype 없이 types 배열만 반환
+  return { status: 200, body: { results: scored.map((x) => ({ ...toQlooEntity(x.e), type: undefined, subtype: undefined })) } };
 }
 
 const CATEGORY_WORDS: [RegExp, Category][] = [
@@ -101,18 +101,17 @@ function tags(params: QlooParams): MockResponse {
   const out: { id: string; name: string; type: string }[] = [];
   for (const [re, cat] of CATEGORY_WORDS) if (re.test(q)) out.push(CATEGORY_TAGS[cat]);
   for (const t of Object.values(DIM_TAGS)) if (q && norm(t.name).includes(q)) out.push(t);
-  // 실제 /v2/tags 응답 틀은 미확인, results.tags 배열로 가정
   return { status: 200, body: { success: true, results: { tags: out.slice(0, take) } } };
 }
 
 function insights(params: QlooParams): MockResponse {
   const type = String(params["filter.type"] ?? "");
-  if (!type) return { status: 400, body: { error: "filter.type is required" } };
+  if (!type) return { status: 400, body: { errors: [{ message: "filter.type is required" }] } };
   const signalIds = list(params["signal.interests.entities"]);
   const signalEntities = signalIds.map((id) => BY_ID.get(id)).filter((e): e is MockEntity => Boolean(e));
   const filterTags = list(params["filter.tags"]);
   if (!signalEntities.length && !filterTags.length && !params["filter.location.query"]) {
-    return { status: 400, body: { error: "at least one valid signal or filter is required" } };
+    return { status: 400, body: { errors: [{ message: "at least one valid signal or filter is required" }] } };
   }
   const signal = vector(signalEntities.map((e) => e.dims));
   const take = Math.min(50, Number(params.take ?? 20));
@@ -152,10 +151,13 @@ function insights(params: QlooParams): MockResponse {
   const priceMax = Number(params["filter.price_level.max"]);
   if (priceMax) pool = pool.filter((e) => !e.place || e.place.price <= priceMax);
 
-  const center = typeof params["filter.location"] === "string" ? BY_ID.get(params["filter.location"]) : undefined;
-  if (center?.place) {
+  const location = params["filter.location"];
+  if (typeof location === "string") {
+    const m = location.match(/^POINT\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)$/i);
+    if (!m) return { status: 400, body: { errors: [{ message: "No shapes were found for the filter locations that were provided.", path: "filter.location.query" }] } };
+    const [lon, lat] = [Number(m[1]), Number(m[2])];
     const radius = Number(params["filter.location.radius"] ?? 15_000);
-    pool = pool.filter((e) => e.place && haversine(center.place!.lat, center.place!.lon, e.place.lat, e.place.lon) <= radius);
+    pool = pool.filter((e) => e.place && haversine(lat, lon, e.place.lat, e.place.lon) <= radius);
   }
 
   const explain = params["feature.explainability"] === true || params["feature.explainability"] === "true";
@@ -165,10 +167,10 @@ function insights(params: QlooParams): MockResponse {
       const extra: Partial<QlooEntity> = { query: { affinity: a } };
       if (explain && signalEntities.length) {
         const raw = signalEntities.map((s) => ({ entity_id: s.id, name: s.name, score: cosine(vector([s.dims]), vector([e.dims])) }));
-        const max = Math.max(...raw.map((r) => r.score), 0.0001);
-        // 미확인 형태, 문서는 query.explainability 존재와 0~1 정규화 점수만 언급
+        // 실제 응답은 entity_id 와 합이 1인 score 만 포함
+        const total = raw.reduce((a, r) => a + r.score, 0) || 1;
         extra.query!.explainability = {
-          "signal.interests.entities": raw.map((r) => ({ ...r, score: round(r.score / max) })).filter((r) => r.score >= 0.1),
+          "signal.interests.entities": raw.map((r) => ({ entity_id: r.entity_id, score: round(r.score / total) })),
         };
       }
       return toQlooEntity(e, extra);

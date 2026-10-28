@@ -49,7 +49,8 @@ const t = await get("/v2/tags", { "filter.query": "restaurant", take: 5 });
 console.log("  top-level keys:", keys(t.body), "| results keys:", keys(t.body?.results));
 console.log("  sample:", short(t.body?.results, 600));
 const tagList = (Array.isArray(t.body?.results) ? t.body?.results : (t.body?.results as Json)?.tags) as Json[] | undefined;
-const restaurantTag = String(tagList?.map((x) => x.id ?? x.tag_id).find((id) => String(id).includes(":place:")) ?? "urn:tag:category:place:restaurant");
+const restaurantTag = "urn:tag:category:place:restaurant";
+expect(Boolean(tagList?.some((x) => x.id === restaurantTag)), "/v2/tags lists urn:tag:category:place:restaurant");
 console.log("  chosen restaurant tag:", restaurantTag);
 
 const placeParams = { "filter.type": "urn:entity:place", "filter.tags": restaurantTag, "signal.interests.entities": ids, take: 5 };
@@ -84,15 +85,17 @@ if (places.length) {
   console.log("  top-level query keys:", keys((scored.body as Json)?.query));
   expect(se.length > 0, "filter.results.entities rescoring returns the same candidates");
 
+  const loc = place.location as { lat: number; lon: number };
   const near = await get("/v2/insights", {
     "filter.type": "urn:entity:place",
-    "filter.location": String(place.entity_id),
+    "filter.tags": "urn:tag:category:place:bar",
+    "filter.location": `POINT(${loc.lon} ${loc.lat})`,
     "filter.location.radius": 2500,
     "signal.interests.entities": ids,
     take: 5,
   });
-  console.log("  near dinner:", entities(near.body).map((x) => x.name).join(" | "));
-  expect(entities(near.body).length > 0, "filter.location with an entity ID returns nearby places");
+  console.log("  bars near dinner:", entities(near.body).map((x) => `${x.name} ${Math.round(Number((x.query as Json)?.distance))} m`).join(" | "));
+  expect(entities(near.body).length > 0, "filter.location with a WKT point returns nearby places");
 }
 
 const tg = await get("/v2/insights", { "filter.type": "urn:tag", "signal.interests.entities": ids, take: 5 });

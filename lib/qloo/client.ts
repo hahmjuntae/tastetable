@@ -5,10 +5,12 @@ import type { QlooParams, TraceEntry } from "./types.ts";
 const DEFAULT_BASE_URL = "https://hackathon.api.qloo.com";
 const TIMEOUT_MS = 10_000;
 
-export type QlooMode = "live" | "mock";
+export type QlooMode = "live" | "mock" | "off";
 
+// 키 없는 배포가 목으로 조용히 돌지 않도록 목은 명시 opt-in 기준
 export function qlooMode(): QlooMode {
-  return process.env.QLOO_API_KEY?.trim() ? "live" : "mock";
+  if (process.env.QLOO_API_KEY?.trim()) return "live";
+  return process.env.QLOO_MOCK === "1" ? "mock" : "off";
 }
 
 export class QlooError extends Error {
@@ -35,7 +37,10 @@ export async function qlooGet<T>(step: string, path: string, params: QlooParams,
   let status = 200;
   let body: unknown;
   try {
-    if (mode === "mock") {
+    if (mode === "off") {
+      status = 503;
+      body = { errors: [{ message: "QLOO_API_KEY is not configured" }] };
+    } else if (mode === "mock") {
       const res = mockQloo(path, params);
       status = res.status;
       body = res.body;
@@ -58,10 +63,10 @@ export async function qlooGet<T>(step: string, path: string, params: QlooParams,
     status = 599;
     body = { error: error instanceof Error ? error.message : "request failed" };
   }
-  trace.push({ step, path, params, status, ms: Date.now() - started, count: countResults(body), mode });
+  trace.push({ step, path, params, status, ms: Date.now() - started, count: countResults(body), mode: mode === "mock" ? "mock" : "live" });
   if (status < 200 || status >= 300) {
-    const err = body as { message?: unknown; error?: unknown } | null;
-    const detail = err?.message ?? err?.error;
+    const err = body as { errors?: { message?: unknown }[]; message?: unknown; error?: unknown } | null;
+    const detail = err?.errors?.[0]?.message ?? err?.message ?? err?.error;
     throw new QlooError(status, `${path} ${status}${detail ? `: ${String(detail)}` : ""}`);
   }
   return body as T;

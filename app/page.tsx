@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { Pick, PlanFailure, PlanResult } from "@/lib/agent.ts";
 
 type Person = { name: string; favorites: string };
-type Health = { qloo: "live" | "mock"; llm: "live" | "mock"; llmModel: string | null; mockFavorites?: string[] };
+type Health = { qloo: "live" | "mock" | "off"; llm: "live" | "mock"; llmModel: string | null; mockFavorites?: string[] };
 
 const PRESETS: { label: string; city: string; brief: string; people: Person[] }[] = [
   {
@@ -163,8 +163,8 @@ export default function Home() {
           <p className="tagline">Dinner plans that work for everyone at the table, not just the loudest person.</p>
         </div>
         {health ? (
-          <span className={`pill ${mock ? "mock" : "live"}`} title={mock ? "Qloo responses come from local fixtures until the hackathon key is configured." : "Live Qloo API"}>
-            {mock ? "Demo data: mock Qloo responses" : "Live Qloo API"}
+          <span className={`pill ${health.qloo === "live" ? "live" : "mock"}`} title={health.qloo === "live" ? "Every result comes from the Qloo Taste AI API" : mock ? "Local test fixtures (QLOO_MOCK=1)" : "QLOO_API_KEY is not configured"}>
+            {health.qloo === "live" ? "Live Qloo API" : mock ? "Test fixtures" : "Qloo key missing"}
             {health.llm === "mock" ? " · template text" : ""}
           </span>
         ) : null}

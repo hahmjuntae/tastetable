@@ -23,6 +23,7 @@ export type Pick = {
   minAffinity: number;
   meanAffinity: number;
   fairness: number;
+  location: { lat: number; lon: number } | null;
 };
 
 export type Story = {
@@ -56,20 +57,13 @@ export const LIMITS = { members: 5, favoritesPerMember: 4, favoritesTotal: 16 };
 // 불행한 한 명을 막는 least misery 가중, 최솟값 우선
 const FAIRNESS_MIN_WEIGHT = 0.6;
 
-const NEXT_STOP_QUERY: Record<NextStopKind, string> = {
-  bar: "bar",
-  "music venue": "music venue",
-  dessert: "dessert",
-  cinema: "movie theater",
-};
-
-// 태그 검색이 비었을 때 쓰는 기본값, 실제 ID는 미확인
-const FALLBACK_TAG: Record<string, string> = {
-  restaurant: "urn:tag:category:place:restaurant",
+// 실제 insights 에서 결과가 나온 category 태그만 사용, 2026-10-29 확인 근거
+const RESTAURANT_TAG = "urn:tag:category:place:restaurant";
+const NEXT_STOP_TAG: Record<NextStopKind, string> = {
   bar: "urn:tag:category:place:bar",
-  "music venue": "urn:tag:category:place:music_venue",
+  "music venue": "urn:tag:category:place:live_music_venue",
   dessert: "urn:tag:category:place:dessert_shop",
-  "movie theater": "urn:tag:category:place:movie_theater",
+  cinema: "urn:tag:category:place:movie_theater",
 };
 
 const PLACE = "urn:entity:place";
@@ -80,23 +74,10 @@ const affinityOf = (e: QlooEntity): number | null => {
 };
 
 function explainDrivers(e: QlooEntity, names: Map<string, string>): string[] {
-  const found: { id: string; score: number }[] = [];
-  const walk = (node: unknown, depth: number) => {
-    if (!node || depth > 4) return;
-    if (Array.isArray(node)) {
-      for (const item of node) {
-        const r = item as { entity_id?: unknown; score?: unknown };
-        if (typeof r?.entity_id === "string" && typeof r.score === "number") found.push({ id: r.entity_id, score: r.score });
-        else walk(item, depth + 1);
-      }
-    } else if (typeof node === "object") {
-      for (const v of Object.values(node as object)) walk(v, depth + 1);
-    }
-  };
-  walk(e.query?.explainability, 0);
-  return found
+  return (e.query?.explainability?.["signal.interests.entities"] ?? [])
+    .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score)
-    .map((f) => names.get(f.id))
+    .map((r) => names.get(r.entity_id))
     .filter((n): n is string => Boolean(n))
     .slice(0, 2);
 }
@@ -138,23 +119,6 @@ async function plan(brief: string) {
     },
   );
   return res.ok ? { ...res.data, source: "llm" as const } : { ...fallback, source: "rules" as const };
-}
-
-async function resolveTag(query: string, trace: TraceEntry[]): Promise<string> {
-  try {
-    const body = await qlooGet<{ results?: { tags?: { id?: string; tag_id?: string }[] } | { id?: string; tag_id?: string }[] }>(
-      `Find tag ID for "${query}"`,
-      "/v2/tags",
-      { "filter.query": query, take: 5 },
-      trace,
-    );
-    const tags = Array.isArray(body.results) ? body.results : body.results?.tags ?? [];
-    const ids = tags.map((t) => t.id ?? t.tag_id).filter((x): x is string => Boolean(x));
-    const slug = query.replace(/\s+/g, "_");
-    return ids.find((id) => id.includes(`place:${slug}`)) ?? ids.find((id) => id.includes(":place:")) ?? ids[0] ?? FALLBACK_TAG[query];
-  } catch {
-    return FALLBACK_TAG[query];
-  }
 }
 
 async function insights(step: string, params: QlooParams, trace: TraceEntry[]): Promise<QlooEntity[]> {
@@ -215,15 +179,16 @@ async function scoreForEach(
     return {
       entityId: c.entity_id,
       name: c.name,
-      description: typeof props.description === "string" ? props.description : null,
+      description: typeof props.short_description === "string" ? props.short_description : typeof props.description === "string" ? props.description : null,
       address: typeof props.address === "string" ? props.address : props.geocode?.name ?? null,
       priceLevel: typeof props.price_level === "number" ? props.price_level : null,
       rating: typeof props.business_rating === "number" ? props.business_rating : null,
-      tags: (c.tags ?? []).map((t) => t.name).filter((n) => n && !/^(Restaurant|Bar|Dessert Shop|Music Venue|Movie Theater)$/.test(n)).slice(0, 5),
+      tags: (c.tags ?? []).map((t) => t.name).filter((n) => n && !/^(Restaurant|Bar|Dessert Shop|Live Music Venue|Music Venue|Movie Theater)$/.test(n)).slice(0, 5),
       scores,
       minAffinity,
       meanAffinity,
       fairness: FAIRNESS_MIN_WEIGHT * minAffinity + (1 - FAIRNESS_MIN_WEIGHT) * meanAffinity,
+      location: c.location ? { lat: c.location.lat, lon: c.location.lon } : null,
     };
   });
 }
@@ -324,6 +289,7 @@ export function sanitizeInput(raw: unknown): PlanInput | string {
 export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailure> {
   const trace: TraceEntry[] = [];
   const notes: string[] = [];
+  if (qlooMode() === "off") return { ok: false, error: "The Qloo API key is not configured on this server.", trace };
   try {
     const planPromise = plan(input.brief);
 
@@ -363,11 +329,9 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
     const allIds = [...new Set(active.flatMap((m) => m.resolved.map((r) => r.entityId)))];
     const names = new Map(active.flatMap((m) => m.resolved.map((r) => [r.entityId, r.name] as const)));
     const planned = await planPromise;
-    const nextQuery = NEXT_STOP_QUERY[planned.nextStop];
+    const nextTag = NEXT_STOP_TAG[planned.nextStop];
 
-    const [restaurantTag, nextTag, tagBody, moviePool] = await Promise.all([
-      resolveTag("restaurant", trace),
-      resolveTag(nextQuery, trace),
+    const [tagBody, moviePool] = await Promise.all([
       qlooGet<QlooInsightsResponse>("Shared taste tags for the group", "/v2/insights", { "filter.type": "urn:tag", "signal.interests.entities": allIds.join(","), take: 8 }, trace).catch(() => ({}) as QlooInsightsResponse),
       insights("Movie pool from combined taste", { "filter.type": "urn:entity:movie", "signal.interests.entities": allIds.join(","), "filter.exclude.entities": allIds.join(","), take: 8 }, trace).catch(() => [] as QlooEntity[]),
     ]);
@@ -375,12 +339,15 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
 
     const dinnerParams: QlooParams = {
       "filter.type": PLACE,
-      "filter.tags": restaurantTag,
+      "filter.tags": RESTAURANT_TAG,
       "signal.interests.entities": allIds.join(","),
       "filter.price_level.max": planned.priceMax ?? undefined,
       take: 15,
     };
-    const dinnerPool = await placesInCity("Dinner candidates from combined taste", input.city, dinnerParams, trace);
+    const cityPool = await placesInCity("Dinner candidates from combined taste", input.city, dinnerParams, trace);
+    // 가격 없는 결과는 쇼핑몰, 동네 이름 같은 비식당이 섞여 후순위 처리
+    const priced = cityPool.filter((p) => typeof p.properties?.price_level === "number");
+    const dinnerPool = priced.length >= 5 ? priced : cityPool;
     if (!dinnerPool.length) return { ok: false, error: `Qloo returned no restaurants for ${input.city} with these filters.`, trace };
 
     const [dinnerPicks, moviePicks] = await Promise.all([
@@ -392,11 +359,13 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
     const pooledTop = dinnerPicks[0];
     const pooledPick = pooledTop && pooledTop.entityId !== dinner.entityId ? pooledTop : null;
 
+    // filter.location 은 엔티티 ID 를 400 으로 거절, WKT POINT(경도 위도) 필요
     let nextPool: QlooEntity[] = [];
-    for (const radius of [2500, 6000]) {
+    const point = dinner.location ? `POINT(${dinner.location.lon} ${dinner.location.lat})` : null;
+    for (const radius of point ? [2500, 6000] : []) {
       nextPool = await insights(
         `${planned.nextStop} within ${radius / 1000} km of dinner`,
-        { "filter.type": PLACE, "filter.tags": nextTag, "filter.location": dinner.entityId, "filter.location.radius": radius, "signal.interests.entities": allIds.join(","), take: 10 },
+        { "filter.type": PLACE, "filter.tags": nextTag, "filter.location": point!, "filter.location.radius": radius, "signal.interests.entities": allIds.join(","), "filter.exclude.entities": dinner.entityId, take: 10 },
         trace,
       ).catch(() => []);
       if (nextPool.length >= 2) break;
@@ -414,7 +383,7 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
 
     const base: Omit<PlanResult, "story"> = {
       ok: true,
-      modes: { qloo: qlooMode(), llm: llmMode(), llmModel: llmModel() },
+      modes: { qloo: qlooMode() === "mock" ? "mock" : "live", llm: llmMode(), llmModel: llmModel() },
       plan: { city: input.city, ...planned },
       members,
       sharedTags,

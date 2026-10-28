@@ -35,7 +35,7 @@ export const DIM_TAGS: Record<Dim, { id: string; name: string; type: string }> =
 export const CATEGORY_TAGS = {
   restaurant: { id: "urn:tag:category:place:restaurant", name: "Restaurant", type: "urn:tag:category:place" },
   bar: { id: "urn:tag:category:place:bar", name: "Bar", type: "urn:tag:category:place" },
-  music_venue: { id: "urn:tag:category:place:music_venue", name: "Music Venue", type: "urn:tag:category:place" },
+  music_venue: { id: "urn:tag:category:place:live_music_venue", name: "Live Music Venue", type: "urn:tag:category:place" },
   dessert: { id: "urn:tag:category:place:dessert_shop", name: "Dessert Shop", type: "urn:tag:category:place" },
   cinema: { id: "urn:tag:category:place:movie_theater", name: "Movie Theater", type: "urn:tag:category:place" },
 } as const;

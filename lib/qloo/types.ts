@@ -1,29 +1,31 @@
-// 응답 형태는 docs.qloo.com 기준, 예시에 없는 필드는 미확인 표시 대상
+// 응답 형태는 hackathon.api.qloo.com 실제 응답 기준(2026-10-29 확인)
 
-export type QlooTagRef = { id: string; name: string; type: string };
+export type QlooTagRef = { id: string; name: string; type: string; weight?: number | null };
 
 export type QlooEntity = {
   name: string;
   entity_id: string;
   type?: string;
-  subtype?: string;
-  types?: string[]; // 미확인, search 응답 예시 없음
+  subtype?: string; // insights 결과에만 존재, /search 는 types 배열만 반환
+  types?: string[];
   popularity?: number;
-  affinity?: number; // Schema 페이지 예시의 최상위 affinity 근거
+  affinity?: number; // 실제 응답은 query.affinity, 문서 예시 호환용 폴백
   properties?: {
     description?: string;
-    address?: string; // 미확인, place 응답 예시 없음
-    price_level?: number; // 미확인, filter.price_level 파라미터만 문서 근거
-    business_rating?: number; // 미확인, filter 파라미터만 문서 근거
-    geocode?: { name?: string; admin1_region?: string; country_code?: string };
+    short_description?: string;
+    address?: string;
+    price_level?: number; // 1~4, 일부 장소는 값 없음
+    business_rating?: number;
+    geocode?: { name?: string; city?: string; admin1_region?: string; country_code?: string };
     image?: { url?: string };
     [key: string]: unknown;
   };
-  location?: { lat: number; lon: number }; // 미확인, place 응답 예시 없음
+  location?: { lat: number; lon: number; geohash?: string };
   tags?: QlooTagRef[];
   query?: {
-    affinity?: number; // 미확인, 결과별 affinity 위치 불명
-    explainability?: unknown; // 미확인, feature.explainability 내부 형태 예시 없음
+    affinity?: number;
+    distance?: number; // filter.location 기준점에서 미터 단위
+    explainability?: { "signal.interests.entities"?: { entity_id: string; score: number }[] };
     measurements?: Record<string, number>;
   };
 };
