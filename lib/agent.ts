@@ -186,7 +186,7 @@ async function scoreForEach(
       address: typeof props.address === "string" ? props.address : props.geocode?.name ?? null,
       priceLevel: typeof props.price_level === "number" ? props.price_level : null,
       rating: typeof props.business_rating === "number" ? props.business_rating : null,
-      tags: (c.tags ?? []).map((t) => t.name).filter((n) => n && !/^(Restaurant|Bar|Dessert Shop|Live Music Venue|Music Venue|Movie Theater)$/.test(n)).slice(0, 5),
+      tags: displayTags(c),
       scores,
       minAffinity,
       meanAffinity,
@@ -194,6 +194,21 @@ async function scoreForEach(
       location: c.location ? { lat: c.location.lat, lon: c.location.lon } : null,
     };
   });
+}
+
+// 결제 수단, 연령대, 주차 같은 운영 태그 제외, 분위기와 메뉴 태그 우선
+const DISPLAY_TAG_TYPES = ["ambience:qloo", "specialty_dish:place", "menu_highlight:qloo", "culinary_style:qloo", "decor:qloo", "interests:qloo"];
+
+function displayTags(c: QlooEntity): string[] {
+  const tags = c.tags ?? [];
+  const rank = (t: { type: string }) => DISPLAY_TAG_TYPES.findIndex((x) => t.type.endsWith(x));
+  const preferred = tags.filter((t) => rank(t) >= 0).sort((a, b) => rank(a) - rank(b));
+  const pool = preferred.length ? preferred : tags.filter((t) => !/^(Restaurant|Bar|Dessert Shop|Live Music Venue|Music Venue|Movie Theater)$/.test(t.name));
+  const seen = new Set<string>();
+  return pool
+    .map((t) => t.name)
+    .filter((n) => n && !seen.has(n.toLowerCase()) && seen.add(n.toLowerCase()))
+    .slice(0, 5);
 }
 
 const byFairness = (a: Pick, b: Pick) => b.fairness - a.fairness;
@@ -336,7 +351,8 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
     const nextTag = NEXT_STOP_TAG[planned.nextStop];
 
     const [tagBody, moviePool] = await Promise.all([
-      qlooGet<QlooInsightsResponse>("Shared taste tags for the group", "/v2/insights", { "filter.type": "urn:tag", "signal.interests.entities": allIds.join(","), take: 8 }, trace).catch(() => ({}) as QlooInsightsResponse),
+      // 태그 타입 제한 없으면 결제, 미용실 같은 무관 태그 혼입, 분위기 태그로 제한
+      qlooGet<QlooInsightsResponse>("Shared taste tags for the group", "/v2/insights", { "filter.type": "urn:tag", "filter.tag.types": "urn:tag:ambience:qloo", "signal.interests.entities": allIds.join(","), take: 8 }, trace).catch(() => ({}) as QlooInsightsResponse),
       insights("Movie pool from combined taste", { "filter.type": "urn:entity:movie", "signal.interests.entities": allIds.join(","), "filter.exclude.entities": allIds.join(","), take: 8 }, trace).catch(() => [] as QlooEntity[]),
     ]);
     const sharedTags = (tagBody.results?.tags ?? []).map((t) => ({ name: t.name, affinity: typeof t.query?.affinity === "number" ? t.query.affinity : null }));
