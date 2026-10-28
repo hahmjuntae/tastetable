@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tastetable",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-19",
+  // lib 코드가 process.env 로 키를 읽어 Node 호환 필요
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  // QLOO_API_KEY, LLM_API_KEY 는 wrangler secret, 저장소에 두지 않음
+  "vars": { "LLM_MODEL": "gemini-3.1-flash-lite" },
+  "assets": {
+    "directory": "./out",
+    "binding": "ASSETS",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash",
+    "run_worker_first": ["/api/*"]
+  }
+}
