@@ -4,6 +4,24 @@ import type { QlooParams, TraceEntry } from "./types.ts";
 // 해커톤 키는 이 호스트 전용, 개발자 가이드 근거
 const DEFAULT_BASE_URL = "https://hackathon.api.qloo.com";
 const TIMEOUT_MS = 10_000;
+// 해커톤 키 초당 10회 제한(x-second-ratelimit-limit 헤더 근거), 여유분 2회
+const MAX_PER_SECOND = 8;
+const MAX_RETRIES = 2;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const recentStarts: number[] = [];
+
+async function throttle(): Promise<void> {
+  for (;;) {
+    const now = Date.now();
+    while (recentStarts.length && now - recentStarts[0] >= 1000) recentStarts.shift();
+    if (recentStarts.length < MAX_PER_SECOND) {
+      recentStarts.push(now);
+      return;
+    }
+    await sleep(1000 - (now - recentStarts[0]) + 5);
+  }
+}
 
 export type QlooMode = "live" | "mock" | "off";
 
@@ -46,17 +64,22 @@ export async function qlooGet<T>(step: string, path: string, params: QlooParams,
       body = res.body;
     } else {
       const base = (process.env.QLOO_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, "");
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-      try {
-        const res = await fetch(`${base}${path}?${toQuery(params)}`, {
-          headers: { "X-Api-Key": process.env.QLOO_API_KEY!.trim(), accept: "application/json" },
-          signal: controller.signal,
-        });
-        status = res.status;
-        body = await res.json().catch(() => null);
-      } finally {
-        clearTimeout(timer);
+      for (let attempt = 0; ; attempt++) {
+        await throttle();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        try {
+          const res = await fetch(`${base}${path}?${toQuery(params)}`, {
+            headers: { "X-Api-Key": process.env.QLOO_API_KEY!.trim(), accept: "application/json" },
+            signal: controller.signal,
+          });
+          status = res.status;
+          body = await res.json().catch(() => null);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (status !== 429 || attempt >= MAX_RETRIES) break;
+        await sleep(1000 * (attempt + 1));
       }
     }
   } catch (error) {

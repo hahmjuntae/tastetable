@@ -321,7 +321,7 @@ function Results({ result }: { result: PlanResult }) {
       <section className="card">
         <details className="trace">
           <summary>
-            Agent trace: {result.trace.length} Qloo calls ({result.modes.qloo === "mock" ? "mock" : "live"}), plan parsed by {result.plan.source === "llm" ? result.modes.llmModel : "rules"}, text by {story.source === "llm" ? result.modes.llmModel : "template"}
+            Agent trace: {result.trace.length} Qloo calls ({result.modes.qloo === "mock" ? "mock" : "live"}), plan parsed by {result.plan.source === "llm" ? result.plan.model ?? result.modes.llmModel : "rules"}, text by {story.source === "llm" ? story.model ?? result.modes.llmModel : "template"}
           </summary>
           <div className="trace-scroll">
             <table className="trace-table">

@@ -32,12 +32,13 @@ export type Story = {
   nextStop: Record<string, string>;
   movie: string;
   source: "llm" | "template";
+  model?: string;
 };
 
 export type PlanResult = {
   ok: true;
   modes: { qloo: "live" | "mock"; llm: "live" | "mock"; llmModel: string | null };
-  plan: { city: string; priceMax: number | null; nextStop: NextStopKind; vibe: string; source: "llm" | "rules" };
+  plan: { city: string; priceMax: number | null; nextStop: NextStopKind; vibe: string; source: "llm" | "rules"; model?: string };
   members: { name: string; resolved: Resolved[]; unresolved: string[] }[];
   sharedTags: { name: string; affinity: number | null }[];
   dinner: Pick;
@@ -67,6 +68,8 @@ const NEXT_STOP_TAG: Record<NextStopKind, string> = {
 };
 
 const PLACE = "urn:entity:place";
+// 장소, 앨범, 인물 동명이인 매칭 방지, 취향 입력 도메인만 허용
+const SEARCH_TYPES = ["movie", "artist", "tv_show", "book", "videogame", "podcast"].map((t) => `urn:entity:${t}`).join(",");
 
 const affinityOf = (e: QlooEntity): number | null => {
   const a = e.query?.affinity ?? e.affinity;
@@ -118,7 +121,7 @@ async function plan(brief: string) {
       return { priceMax, nextStop, vibe };
     },
   );
-  return res.ok ? { ...res.data, source: "llm" as const } : { ...fallback, source: "rules" as const };
+  return res.ok ? { ...res.data, source: "llm" as const, model: res.model } : { ...fallback, source: "rules" as const };
 }
 
 async function insights(step: string, params: QlooParams, trace: TraceEntry[]): Promise<QlooEntity[]> {
@@ -260,6 +263,7 @@ async function writeStory(result: Omit<PlanResult, "story">): Promise<Story> {
     nextStop: merge(res.data.nextStop, fallback.nextStop),
     movie: res.data.movie || fallback.movie,
     source: "llm",
+    model: res.model,
   };
 }
 
@@ -303,7 +307,7 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
       input.members.map(async (m, i) => {
         const hits = await Promise.all(
           lookups[i].map((q) =>
-            qlooGet<{ results?: QlooEntity[] }>(`Resolve "${q}" for ${m.name}`, "/search", { query: q, take: 1 }, trace)
+            qlooGet<{ results?: QlooEntity[] }>(`Resolve "${q}" for ${m.name}`, "/search", { query: q, types: SEARCH_TYPES, take: 1 }, trace)
               .then((b) => ({ q, e: b.results?.[0] }))
               .catch(() => ({ q, e: undefined })),
           ),
