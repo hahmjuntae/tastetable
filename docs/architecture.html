@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1440">
+<title>TasteTable architecture</title>
+<link rel="stylesheet" href="../app/ds/ds.css">
+<style>
+  :root {
+    --ink: var(--gray-1000, #0d0d0d);
+    --muted: var(--gray-550, #4f4f4f);
+    --line: var(--gray-200, #cdcdcd);
+    --soft: var(--gray-50, #f9f9f9);
+    --qloo: var(--blue-500, #0169cc);
+    --qloo-bg: var(--blue-50, #e5f3ff);
+    --llm: var(--purple-500, #8046d9);
+    --llm-bg: var(--purple-50, #efe5fe);
+    --local: var(--green-600, #008635);
+    --local-bg: var(--green-50, #d9f4e4);
+  }
+  html, body { margin: 0; background: var(--gray-0, #fff); }
+  body { width: 1440px; height: 960px; position: relative; overflow: hidden; font-family: var(--font-sans); color: var(--ink); letter-spacing: -0.01em; }
+  .mono { font-family: var(--font-mono); letter-spacing: 0; }
+  header { position: absolute; left: 48px; top: 36px; right: 48px; display: flex; justify-content: space-between; align-items: flex-end; }
+  h1 { margin: 0; font-size: 34px; font-weight: 700; letter-spacing: -0.02em; }
+  header p { margin: 6px 0 0; font-size: 17px; color: var(--muted); }
+  .legend { display: flex; gap: 18px; font-size: 14px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .frame { position: absolute; border-radius: 18px; }
+  .frame > .label { position: absolute; left: 20px; top: 14px; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: none; }
+  .frame > .label b { color: var(--ink); font-weight: 700; }
+  .browser { left: 48px; top: 140px; width: 230px; height: 600px; background: var(--soft); border: 1px solid var(--line); }
+  .worker { left: 310px; top: 140px; width: 1082px; height: 600px; background: var(--soft); border: 1px solid var(--line); }
+  .card { position: absolute; width: 230px; height: 238px; box-sizing: border-box; padding: 16px 16px 14px; background: var(--gray-0, #fff); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 1px 2px rgba(0,0,0,.04); display: flex; flex-direction: column; }
+  .card .top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .num { width: 24px; height: 24px; border-radius: 12px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 700; display: grid; place-items: center; font-variant-numeric: tabular-nums; flex: none; }
+  .tag { font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+  .tag.qloo { color: var(--qloo); background: var(--qloo-bg); }
+  .tag.llm { color: var(--llm); background: var(--llm-bg); }
+  .tag.local { color: var(--local); background: var(--local-bg); }
+  .tag.neutral { color: var(--muted); background: var(--gray-100, #ededed); }
+  .card h2 { margin: 0 0 6px; font-size: 18px; font-weight: 700; letter-spacing: -0.015em; }
+  .card p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); }
+  .card .code { margin-top: auto; font-size: 11.5px; line-height: 1.5; color: var(--ink); background: var(--soft); border-radius: 8px; padding: 7px 9px; word-break: break-word; }
+  .card.hero { border: 1.5px solid var(--local); }
+  .formula { margin-top: auto; font-size: 15px; font-weight: 700; text-align: center; padding: 10px 6px; border-radius: 8px; background: var(--local-bg); color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ext { position: absolute; top: 780px; height: 136px; box-sizing: border-box; padding: 18px 22px; border-radius: 16px; }
+  .ext h3 { margin: 0 0 6px; font-size: 19px; font-weight: 700; }
+  .ext p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--muted); }
+  .ext.qloo { left: 310px; width: 640px; background: var(--qloo-bg); border: 1px solid color-mix(in oklab, var(--qloo) 30%, transparent); }
+  .ext.llm { left: 974px; width: 418px; background: var(--llm-bg); border: 1px solid color-mix(in oklab, var(--llm) 30%, transparent); }
+  .ext.cf { left: 48px; width: 230px; background: var(--soft); border: 1px solid var(--line); }
+  .ext h3 .mono { font-size: 13px; font-weight: 500; color: var(--muted); margin-left: 6px; }
+  svg.arrows { position: absolute; inset: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>TasteTable architecture</h1>
+    <p>One request to <span class="mono">POST /api/plan</span>. Qloo scores every restaurant. The LLM only reads and writes text.</p>
+  </div>
+  <div class="legend">
+    <span><i class="dot" style="background:var(--qloo)"></i>Qloo API call</span>
+    <span><i class="dot" style="background:var(--llm)"></i>Gemini call</span>
+    <span><i class="dot" style="background:var(--local)"></i>Worker logic</span>
+  </div>
+</header>
+
+<div class="frame browser"><div class="label"><b>Browser</b></div></div>
+<div class="frame worker"><div class="label"><b>Cloudflare Worker</b> <span class="mono">/api/plan</span></div></div>
+
+<!-- browser column -->
+<div class="card" style="left:48px; top:178px; width:230px; border:none; background:transparent; box-shadow:none; padding:16px 20px;">
+  <div class="top"><span class="num">1</span><span class="tag neutral">Next.js page</span></div>
+  <h2>Input</h2>
+  <p>City, brief text, and favorites for each person.</p>
+  <div class="code mono" style="background:var(--gray-0,#fff)">"Saturday dinner, not too pricey"<br>Mina: Parasite, Norah Jones</div>
+</div>
+<div class="card" style="left:48px; top:488px; width:230px; border:none; background:transparent; box-shadow:none; padding:16px 20px;">
+  <div class="top"><span class="num">10</span><span class="tag neutral">Next.js page</span></div>
+  <h2>Results</h2>
+  <p>The fair pick, alternatives, the pooled pick, one line for each person, and the agent trace.</p>
+</div>
+
+<!-- row 1 -->
+<div class="card" style="left:336px; top:190px;">
+  <div class="top"><span class="num">2</span><span class="tag llm">Gemini</span></div>
+  <h2>LLM planner</h2>
+  <p>Reads the brief. Sets the meal, the price ceiling, and the kind of next stop.</p>
+  <div class="code mono">{ meal, priceMax, nextStop }</div>
+</div>
+<div class="card" style="left:596px; top:190px;">
+  <div class="top"><span class="num">3</span><span class="tag qloo">Qloo</span></div>
+  <h2>Match favorites</h2>
+  <p>One search for each favorite. Returns entity IDs for each person.</p>
+  <div class="code mono">GET /search</div>
+</div>
+<div class="card" style="left:856px; top:190px;">
+  <div class="top"><span class="num">4</span><span class="tag qloo">Qloo</span></div>
+  <h2>Restaurant candidates</h2>
+  <p>Uses the combined signal of the group. Also gets shared ambience tags.</p>
+  <div class="code mono">GET /v2/insights<br>filter.exclude.tags</div>
+</div>
+<div class="card hero" style="left:1116px; top:190px;">
+  <div class="top"><span class="num">5</span><span class="tag local">Worker</span></div>
+  <h2>Meal filter</h2>
+  <p>Removes cafes, fast food, and chains. Widens the search when fewer than 6 restaurants remain.</p>
+  <div class="code mono">primary_genre, loyalty_program</div>
+</div>
+
+<!-- row 2, right to left -->
+<div class="card" style="left:1116px; top:488px;">
+  <div class="top"><span class="num">6</span><span class="tag qloo">Qloo</span></div>
+  <h2>Score each person</h2>
+  <p>Scores every restaurant against the signal of one person. Lists the favorites behind each score.</p>
+  <div class="code mono">filter.results.entities<br>feature.explainability</div>
+</div>
+<div class="card hero" style="left:856px; top:488px;">
+  <div class="top"><span class="num">7</span><span class="tag local">Worker</span></div>
+  <h2>Fairness rank</h2>
+  <p>The person with the lowest score gets the most weight.</p>
+  <div class="formula">0.6 × lowest + 0.4 × mean</div>
+</div>
+<div class="card" style="left:596px; top:488px;">
+  <div class="top"><span class="num">8</span><span class="tag qloo">Qloo</span></div>
+  <h2>Next stop and movie</h2>
+  <p>Finds a bar, music venue, dessert shop, or cinema near dinner. Picks one movie for the table.</p>
+  <div class="code mono">filter.location<br>radius 2.5 km, then 6 km</div>
+</div>
+<div class="card" style="left:336px; top:488px;">
+  <div class="top"><span class="num">9</span><span class="tag llm">Gemini</span></div>
+  <h2>LLM writer</h2>
+  <p>Writes one sentence for each person from the scores and drivers. A template replaces the LLM if the call fails.</p>
+</div>
+
+<!-- external services -->
+<div class="ext cf">
+  <h3>Static assets</h3>
+  <p>The same Worker serves the Next.js page.</p>
+</div>
+<div class="ext qloo">
+  <h3>Qloo Hackathon API <span class="mono">hackathon.api.qloo.com</span></h3>
+  <p>Steps 3, 4, 6, and 8. Live tests used 19 to 28 calls for one plan. The client sends at most 8 calls each second and retries a 429 two times.</p>
+</div>
+<div class="ext llm">
+  <h3>Google Gemini <span class="mono">OpenAI-compatible API</span></h3>
+  <p>Steps 2 and 9. The Worker tries a second model if the first call fails. Rules and a template replace the LLM when no key is set.</p>
+</div>
+
+<svg class="arrows" width="1440" height="960" viewBox="0 0 1440 960">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#5d5d5d"/></marker>
+  </defs>
+  <g stroke="#5d5d5d" stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M262 309 H330"/>
+    <path d="M566 309 H590"/>
+    <path d="M826 309 H850"/>
+    <path d="M1086 309 H1110"/>
+    <path d="M1231 428 V482"/>
+    <path d="M1116 607 H1092"/>
+    <path d="M856 607 H832"/>
+    <path d="M596 607 H572"/>
+    <path d="M336 607 H268"/>
+  </g>
+</svg>
+</body>
+</html>
