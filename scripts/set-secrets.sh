@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 QLOO_ITEM="${QLOO_KEYCHAIN_ITEM:-hackathon-qloo-key}"
-LLM_ITEM="${LLM_KEYCHAIN_ITEM:-hackathon-gemini-keit}"
+LLM_ITEM="${LLM_KEYCHAIN_ITEM:-hackathon-gemini-qloo}"
 
 if security find-generic-password -s "$QLOO_ITEM" -w >/dev/null 2>&1; then
   security find-generic-password -s "$QLOO_ITEM" -w | npx wrangler secret put QLOO_API_KEY
