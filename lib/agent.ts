@@ -34,12 +34,13 @@ export type Story = {
   movie: string;
   source: "llm" | "template";
   model?: string;
+  fallbackReason?: string;
 };
 
 export type PlanResult = {
   ok: true;
   modes: { qloo: "live" | "mock"; llm: "live" | "mock"; llmModel: string | null };
-  plan: { city: string; meal: Meal; priceMax: number | null; nextStop: NextStopKind; vibe: string; source: "llm" | "rules"; model?: string };
+  plan: { city: string; meal: Meal; priceMax: number | null; nextStop: NextStopKind; vibe: string; source: "llm" | "rules"; model?: string; fallbackReason?: string };
   members: { name: string; resolved: Resolved[]; unresolved: string[] }[];
   sharedTags: { name: string; affinity: number | null }[];
   dinner: Pick;
@@ -122,7 +123,7 @@ async function plan(brief: string) {
       return { priceMax, nextStop, vibe };
     },
   );
-  return res.ok ? { ...res.data, source: "llm" as const, model: res.model } : { ...fallback, source: "rules" as const };
+  return res.ok ? { ...res.data, source: "llm" as const, model: res.model } : { ...fallback, source: "rules" as const, fallbackReason: res.reason };
 }
 
 async function insights(step: string, params: QlooParams, trace: TraceEntry[]): Promise<QlooEntity[]> {
@@ -318,7 +319,7 @@ async function writeStory(result: Omit<PlanResult, "story">): Promise<Story> {
       return { headline: o.headline, dinner: pickLines(o.dinner), nextStop: pickLines(o.nextStop), movie: typeof o.movie === "string" ? o.movie : "" };
     },
   );
-  if (!res.ok) return fallback;
+  if (!res.ok) return { ...fallback, fallbackReason: res.reason };
   const merge = (llm: Record<string, string>, tpl: Record<string, string>) => Object.fromEntries(names.map((n) => [n, llm[n] || tpl[n]]));
   return {
     headline: res.data.headline,

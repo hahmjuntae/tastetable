@@ -41,15 +41,20 @@ export function extractJSON(text: string): unknown {
   }
 }
 
+// 키, 요청 형식 오류는 다른 모델에서도 같은 결과라 대체 모델 시도 제외 대상
+const retryable = (reason: string) => !/^HTTP 4(0[0-4])$/.test(reason);
+
 export async function chatJSON<T>(messages: ChatMessage[], validate: (v: unknown) => T | null): Promise<LLMResult<T>> {
   const c = config();
   if (!c) return { ok: false, reason: "no LLM key" };
-  let last: LLMResult<T> = { ok: false, reason: "no model" };
+  const failures: string[] = [];
   for (const model of [c.model, ...c.fallbacks.filter((m) => m !== c.model)]) {
-    last = await callModel(c, model, messages, validate);
-    if (last.ok || last.reason !== "HTTP 429") return last;
+    const res = await callModel(c, model, messages, validate);
+    if (res.ok) return res;
+    failures.push(`${model}: ${res.reason}`);
+    if (!retryable(res.reason)) break;
   }
-  return last;
+  return { ok: false, reason: failures.join("; ") || "no model" };
 }
 
 async function callModel<T>(c: LLMConfig, model: string, messages: ChatMessage[], validate: (v: unknown) => T | null): Promise<LLMResult<T>> {

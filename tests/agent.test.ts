@@ -60,6 +60,7 @@ test("agent picks a dinner that scores every member", async () => {
   assert.ok(res.trace.every((t) => !JSON.stringify(t.params).includes("Api-Key")));
   assert.ok(res.trace.length <= 45, `trace ${res.trace.length}`);
   for (const n of ["Mina", "Leo", "Ava"]) assert.ok(res.story.dinner[n]);
+  assert.equal(res.story.fallbackReason, "no LLM key");
   assert.ok(res.dinner.scores.some((s) => s.drivers.length), "explainability drivers were not parsed");
   const near = res.trace.filter((t) => t.step.includes("of dinner"));
   assert.ok(near.length && near.every((t) => /^POINT\(-?[\d.]+ -?[\d.]+\)$/.test(String(t.params["filter.location"]))), "next stop must use a WKT point");
