@@ -204,7 +204,7 @@ export default function Home() {
             </div>
           ))}
           {people.length < 5 ? (
-            <button type="button" style={{ marginTop: 10 }} onClick={() => setPeople((x) => [...x, { name: "", favorites: "" }])}>
+            <button type="button" className="add" onClick={() => setPeople((x) => [...x, { name: "", favorites: "" }])}>
               Add a person
             </button>
           ) : null}
