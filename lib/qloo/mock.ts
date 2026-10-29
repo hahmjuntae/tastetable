@@ -47,6 +47,8 @@ function haversine(lat1: number, lon1: number, lat2: number, lon2: number): numb
 function toQlooEntity(e: MockEntity, extra: Partial<QlooEntity> = {}): QlooEntity {
   const tags = e.dims.map((d) => DIM_TAGS[d]);
   if (e.place) for (const c of e.place.categories) tags.unshift(CATEGORY_TAGS[c]);
+  const pe = e.place?.extra;
+  for (const id of pe?.tags ?? []) tags.push({ id, name: id.split(":").pop()!, type: id.split(":").slice(0, -1).join(":") });
   return {
     name: e.name,
     entity_id: e.id,
@@ -61,6 +63,9 @@ function toQlooEntity(e: MockEntity, extra: Partial<QlooEntity> = {}): QlooEntit
           price_level: e.place.price,
           business_rating: e.place.rating,
           geocode: { name: e.place.hood, admin1_region: "NY", country_code: "US" },
+          ...(pe?.primaryGenre ? { primary_genre: { id: pe.primaryGenre } } : {}),
+          ...(pe?.loyalty ? { loyalty_program: pe.loyalty } : {}),
+          ...(pe?.website ? { website: pe.website } : {}),
         }
       : {},
     ...(e.place ? { location: { lat: e.place.lat, lon: e.place.lon } } : {}),
@@ -141,6 +146,9 @@ function insights(params: QlooParams): MockResponse {
   if (results.length) pool = pool.filter((e) => results.includes(e.id));
   const exclude = new Set([...list(params["filter.exclude.entities"]), ...signalIds]);
   pool = pool.filter((e) => !exclude.has(e.id));
+
+  const excludeTags = new Set(list(params["filter.exclude.tags"]));
+  if (excludeTags.size) pool = pool.filter((e) => !toQlooEntity(e).tags!.some((t) => excludeTags.has(t.id)));
 
   if (filterTags.length) {
     pool = pool.filter((e) => {

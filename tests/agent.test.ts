@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runAgent, sanitizeInput } from "../lib/agent.ts";
+import { mealPool, runAgent, sanitizeInput } from "../lib/agent.ts";
+import { mealExcludeTags } from "../lib/meal.ts";
+import type { TraceEntry } from "../lib/qloo/types.ts";
 import { mockQloo } from "../lib/qloo/mock.ts";
 
 delete process.env.QLOO_API_KEY;
@@ -83,4 +85,47 @@ test("fairness never prefers a pick with a lower minimum and lower mean", async 
 
 test("sanitizeInput rejects a one-person group", () => {
   assert.equal(typeof sanitizeInput({ city: "NYC", members: [{ name: "A", favorites: ["Parasite"] }] }), "string");
+});
+
+const DECOYS = ["Whisker Room Cat Cafe", "Hero Express", "Velvet Hour"];
+
+test("decoys outrank real restaurants when nothing filters them", () => {
+  const res = mockQloo("/v2/insights", {
+    "filter.type": "urn:entity:place",
+    "filter.tags": "urn:tag:category:place:restaurant",
+    "signal.interests.entities": "MOCK-MOVIE-PARASITE,MOCK-ARTIST-NORAH-JONES,MOCK-MOVIE-BLADE-RUNNER-2049,MOCK-TV-SEVERANCE,MOCK-MOVIE-BEFORE-SUNRISE,MOCK-BOOK-NORWEGIAN-WOOD",
+    take: 5,
+  });
+  const top = (res.body as { results: { entities: { name: string }[] } }).results.entities.map((e) => e.name);
+  assert.ok(DECOYS.every((d) => top.includes(d)), top.join(", "));
+});
+
+test("dinner never lands on a cat cafe, a chain or a cocktail bar", async () => {
+  const res = await runAgent(sanitizeInput(group) as never);
+  if (!res.ok) throw new Error(res.error);
+  assert.equal(res.plan.meal, "dinner");
+  const shown = [res.dinner, ...res.alternatives, res.pooledPick].filter(Boolean).map((p) => p!.name);
+  for (const d of DECOYS) assert.ok(!shown.includes(d), `${d} in ${shown.join(", ")}`);
+  const step = res.trace.find((t) => t.step === "Dinner candidates from combined taste");
+  assert.equal(step?.params["filter.exclude.tags"], mealExcludeTags("dinner").join(","));
+  assert.ok(res.notes.some((n) => n.includes("Hero Express")), res.notes.join(" | "));
+});
+
+test("a tight budget widens the search before giving up on sit-down places", async () => {
+  process.env.QLOO_MOCK = "1";
+  const trace: TraceEntry[] = [];
+  const notes: string[] = [];
+  const pool = await mealPool("Brooklyn, New York", "dinner", {
+    "filter.type": "urn:entity:place",
+    "filter.tags": "urn:tag:category:place:restaurant",
+    "filter.exclude.tags": mealExcludeTags("dinner").join(","),
+    "signal.interests.entities": "MOCK-MOVIE-PARASITE,MOCK-ARTIST-NORAH-JONES",
+    "filter.price_level.max": 1,
+    take: 25,
+  }, notes, trace);
+  assert.deepEqual(trace.map((t) => t.step), ["Dinner candidates from combined taste", "Wider dinner search, 2 fit so far", "Wider dinner search without the price cap"]);
+  assert.ok(pool.length >= 6, `pool ${pool.length}`);
+  assert.deepEqual(pool.slice(0, 2).map((p) => p.properties?.price_level), [1, 1], "budget picks stay first");
+  assert.ok(notes.some((n) => n.startsWith("Only 2 dinner spots fit the budget")), notes.join(" | "));
+  assert.ok(!pool.some((p) => DECOYS.includes(p.name)));
 });

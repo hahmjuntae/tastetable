@@ -57,8 +57,12 @@ export type MockEntity = {
     rating: number;
     categories: Category[];
     blurb: string;
+    extra?: PlaceExtra;
   };
 };
+
+// 실제 응답의 primary_genre, loyalty_program, website, 끼니 태그 흉내 대상
+export type PlaceExtra = { primaryGenre?: string; loyalty?: string; website?: string; tags?: string[] };
 
 const M = "urn:entity:movie";
 const A = "urn:entity:artist";
@@ -83,12 +87,12 @@ type Hood = keyof typeof HOODS;
 
 function place(
   id: string, name: string, hood: Hood, dims: Dim[], price: number, rating: number,
-  categories: Category[], blurb: string, jitter: [number, number] = [0, 0],
+  categories: Category[], blurb: string, jitter: [number, number] = [0, 0], extra?: PlaceExtra,
 ): MockEntity {
   const h = HOODS[hood];
   return {
     id, name, subtype: P, dims, popularity: Math.min(0.99, 0.5 + rating / 10),
-    place: { hood: h.hood, lat: h.lat + jitter[0], lon: h.lon + jitter[1], price, rating, categories, blurb },
+    place: { hood: h.hood, lat: h.lat + jitter[0], lon: h.lon + jitter[1], price, rating, categories, blurb, extra },
   };
 }
 
@@ -138,6 +142,13 @@ export const CATALOG: MockEntity[] = [
   place("MOCK-PLACE-BODEGA-DISCO", "Bodega Disco", "bushwick", ["lively", "latin", "electronic", "cocktails", "late_night"], 2, 4.2, ["restaurant"], "Caribbean plates, mirror ball, DJ from ten."),
   place("MOCK-PLACE-COPPER-POT", "Copper Pot Brasserie", "williamsburg", ["food_obsessed", "retro", "italian", "lively"], 4, 4.7, ["restaurant"], "Chef's counter brasserie, tasting menu on weekends."),
   place("MOCK-PLACE-SEOUL-GARDEN", "Seoul Garden Veg", "sunset", ["korean", "vegetarian", "cozy", "spicy"], 1, 4.3, ["restaurant"], "Temple-food inspired Korean, all vegetarian."),
+  // 저녁 후보에서 빠져야 하는 미끼, 그룹 취향과 가장 가깝게 설계한 대상
+  place("MOCK-PLACE-WHISKER-ROOM", "Whisker Room Cat Cafe", "les", ["moody", "literary", "arthouse", "cozy", "scifi", "jazz"], 2, 4.6, ["restaurant"], "Cat cafe with espresso and pastries.", [0, 0],
+    { primaryGenre: "urn:tag:genre:place:cat_cafe", tags: ["urn:tag:genre:place:cat_cafe", "urn:tag:category:place:cat_cafe"] }),
+  place("MOCK-PLACE-HERO-EXPRESS", "Hero Express", "fortGreene", ["moody", "literary", "arthouse", "natural_wine", "electronic"], 1, 3.9, ["restaurant"], "Counter-serve build-your-own subs.", [0, 0],
+    { primaryGenre: "urn:tag:genre:place:restaurant:sandwich_shop", loyalty: "Hero Points", website: "https://restaurants.heroexpress.example/ny/brooklyn/12" }),
+  place("MOCK-PLACE-VELVET-HOUR", "Velvet Hour", "eastVillage", ["moody", "literary", "arthouse", "dark_comedy", "late_night"], 3, 4.5, ["restaurant", "bar"], "Speakeasy cocktails, a few bar snacks.", [0, 0],
+    { primaryGenre: "urn:tag:genre:place:restaurant:cocktail_bar" }),
   place("MOCK-PLACE-STATIC-SMOKE", "Static & Smoke", "williamsburg", ["lively", "indie_rock", "live_music", "spicy"], 2, 4.2, ["restaurant", "music_venue"], "Barbecue hall with a small stage.", [0.002, 0.003]),
 
   place("MOCK-PLACE-BLUE-HOUR", "Blue Hour Listening Room", "eastVillage", ["jazz", "late_night", "moody", "cocktails"], 3, 4.7, ["bar"], "Hi-fi listening bar, records only.", [0.002, -0.001]),

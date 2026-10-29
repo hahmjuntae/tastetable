@@ -1,4 +1,5 @@
 import { chatJSON, llmMode, llmModel } from "./llm.ts";
+import { detectMeal, mealExcludeTags, mergeById, splitForMeal, type Meal } from "./meal.ts";
 import { QlooError, qlooGet, qlooMode } from "./qloo/client.ts";
 import type { QlooEntity, QlooInsightsResponse, QlooParams, TraceEntry } from "./qloo/types.ts";
 
@@ -38,7 +39,7 @@ export type Story = {
 export type PlanResult = {
   ok: true;
   modes: { qloo: "live" | "mock"; llm: "live" | "mock"; llmModel: string | null };
-  plan: { city: string; priceMax: number | null; nextStop: NextStopKind; vibe: string; source: "llm" | "rules"; model?: string };
+  plan: { city: string; meal: Meal; priceMax: number | null; nextStop: NextStopKind; vibe: string; source: "llm" | "rules"; model?: string };
   members: { name: string; resolved: Resolved[]; unresolved: string[] }[];
   sharedTags: { name: string; affinity: number | null }[];
   dinner: Pick;
@@ -142,6 +143,53 @@ async function placesInCity(step: string, city: string, params: QlooParams, trac
 }
 
 type ResolvedMember = { name: string; resolved: Resolved[]; unresolved: string[] };
+
+// 개인별 채점 대상 상한과 범위 확대 기준
+const POOL_SIZE = 15;
+const MIN_MEAL_POOL = 6;
+
+const hasPrice = (e: QlooEntity) => typeof e.properties?.price_level === "number";
+
+// 카페, 패스트푸드, 체인 제외 후 부족하면 take 확대 → 가격 상한 해제 → 술집 위주 후보 순 폴백
+export async function mealPool(city: string, meal: Meal, params: QlooParams, notes: string[], trace: TraceEntry[]): Promise<QlooEntity[]> {
+  let raw = await placesInCity(`${meal[0].toUpperCase()}${meal.slice(1)} candidates from combined taste`, city, params, trace);
+  let split = splitForMeal(raw, meal);
+  if (split.meal.length < MIN_MEAL_POOL) {
+    const wider = await placesInCity(`Wider ${meal} search, ${split.meal.length} fit so far`, city, { ...params, take: 50 }, trace).catch(() => [] as QlooEntity[]);
+    raw = mergeById(raw, wider);
+    split = splitForMeal(raw, meal);
+  }
+  if (split.meal.length < MIN_MEAL_POOL && params["filter.price_level.max"] !== undefined) {
+    const before = split.meal.length;
+    const uncapped = await placesInCity(`Wider ${meal} search without the price cap`, city, { ...params, "filter.price_level.max": undefined, take: 50 }, trace).catch(() => [] as QlooEntity[]);
+    raw = mergeById(raw, uncapped);
+    split = splitForMeal(raw, meal);
+    if (split.meal.length > before) notes.push(`Only ${before} ${meal} spots fit the budget, so some options may cost more.`);
+  }
+  // 가격 없는 결과는 쇼핑몰, 동네 이름 같은 비식당이 섞여 후순위 처리
+  const priced = split.meal.filter(hasPrice);
+  let pool = (priced.length >= MIN_MEAL_POOL ? priced : [...priced, ...split.meal.filter((e) => !hasPrice(e))]).slice(0, POOL_SIZE);
+  if (pool.length < MIN_MEAL_POOL && split.weak.length) {
+    pool = [...pool, ...split.weak].slice(0, POOL_SIZE);
+    notes.push(`Few sit-down ${meal} spots came back, so bars that serve food are included too.`);
+  }
+  if (!pool.length) {
+    notes.push(`Qloo only returned cafes, fast food or chains for ${meal} here.`);
+    return split.dropped.map((d) => d.entity).slice(0, POOL_SIZE);
+  }
+  if (split.dropped.length) notes.push(leftOutNote(split.dropped));
+  return pool;
+}
+
+const dropKind = (reasons: string[]) =>
+  reasons.some((r) => r.startsWith("chain")) ? "chains" : reasons.some((r) => /fast.food/.test(r)) ? "fast food" : reasons.some((r) => /cafe|coffee|bakery|dessert|ice_cream/.test(r)) ? "cafes" : "other non-meal spots";
+
+function leftOutNote(dropped: { entity: QlooEntity; reasons: string[] }[]): string {
+  const kinds = [...new Set(dropped.map((d) => dropKind(d.reasons)))];
+  const label = kinds.length > 1 ? `${kinds.slice(0, -1).join(", ")} and ${kinds.at(-1)}` : kinds[0];
+  const names = dropped.slice(0, 3).map((d) => d.entity.name).join(", ");
+  return `Left out ${label}: ${names}${dropped.length > 3 ? ` and ${dropped.length - 3} more` : ""}.`;
+}
 
 async function scoreForEach(
   label: string,
@@ -357,17 +405,16 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
     ]);
     const sharedTags = (tagBody.results?.tags ?? []).map((t) => ({ name: t.name, affinity: typeof t.query?.affinity === "number" ? t.query.affinity : null }));
 
+    const meal = detectMeal(input.brief);
     const dinnerParams: QlooParams = {
       "filter.type": PLACE,
       "filter.tags": RESTAURANT_TAG,
+      "filter.exclude.tags": mealExcludeTags(meal).join(","),
       "signal.interests.entities": allIds.join(","),
       "filter.price_level.max": planned.priceMax ?? undefined,
-      take: 15,
+      take: 25,
     };
-    const cityPool = await placesInCity("Dinner candidates from combined taste", input.city, dinnerParams, trace);
-    // 가격 없는 결과는 쇼핑몰, 동네 이름 같은 비식당이 섞여 후순위 처리
-    const priced = cityPool.filter((p) => typeof p.properties?.price_level === "number");
-    const dinnerPool = priced.length >= 5 ? priced : cityPool;
+    const dinnerPool = await mealPool(input.city, meal, dinnerParams, notes, trace);
     if (!dinnerPool.length) return { ok: false, error: `Qloo returned no restaurants for ${input.city} with these filters.`, trace };
 
     const [dinnerPicks, moviePicks] = await Promise.all([
@@ -404,7 +451,7 @@ export async function runAgent(input: PlanInput): Promise<PlanResult | PlanFailu
     const base: Omit<PlanResult, "story"> = {
       ok: true,
       modes: { qloo: qlooMode() === "mock" ? "mock" : "live", llm: llmMode(), llmModel: llmModel() },
-      plan: { city: input.city, ...planned },
+      plan: { city: input.city, meal, ...planned },
       members,
       sharedTags,
       dinner,
